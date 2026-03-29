@@ -33,13 +33,19 @@ export async function findByReciterAndSurah(
   return snap.empty ? null : docToContribution(snap.docs[0]);
 }
 
-export async function findBySurah(surah: number): Promise<Contribution[]> {
-  const snap = await db
+export async function findBySurah(surah: number, onlyApproved: boolean = true): Promise<Contribution[]> {
+  
+  const snap = onlyApproved ? await db
     .collection(COLLECTION)
     .where('surah', '==', surah)
     .where('status', '==', 'approved')
     .orderBy('createdAt', 'desc')
+    .get() : await db
+    .collection(COLLECTION)
+    .where('surah', '==', surah)
+    .orderBy('createdAt', 'desc')
     .get();
+  
   return snap.docs.map(docToContribution);
 }
 

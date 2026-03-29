@@ -32,8 +32,8 @@ export async function submit(
   return repo.create({ reciterName, surah, audioFileId, timingFileId, audioHash, createdBy: userId });
 }
 
-export async function listBySurah(surah: number): Promise<Contribution[]> {
-  return repo.findBySurah(surah);
+export async function listBySurah(surah: number, onlyApproved: boolean = true): Promise<Contribution[]> {
+  return repo.findBySurah(surah, onlyApproved);
 }
 
 export async function getById(id: string): Promise<Contribution> {

@@ -18,7 +18,8 @@ export async function list(req: Request, res: Response, next: NextFunction): Pro
       res.status(400).json({ error: 'surah query param must be an integer between 1 and 114' });
       return;
     }
-    const contributions = await service.listBySurah(surah);
+
+    const contributions = await service.listBySurah(surah, false); //Fetch all contributions regardless of status
     res.json(contributions);
   } catch (err) {
     next(err);
