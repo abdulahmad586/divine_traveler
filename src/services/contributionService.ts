@@ -5,6 +5,7 @@ import { ConflictError, ForbiddenError, NotFoundError } from '../errors';
 
 export async function submit(
   userId: string,
+  userName: string,
   body: PostContributionBody
 ): Promise<Contribution> {
   const { reciterName, surah, audioFileId, timingFileId, audioHash, force } = body;
@@ -29,7 +30,7 @@ export async function submit(
     }
   }
 
-  return repo.create({ reciterName, surah, audioFileId, timingFileId, audioHash, createdBy: userId });
+  return repo.create({ reciterName, surah, audioFileId, timingFileId, audioHash, createdBy: userId, createdByName: userName });
 }
 
 export async function listBySurah(surah: number, onlyApproved: boolean = true): Promise<Contribution[]> {

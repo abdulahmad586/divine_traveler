@@ -16,6 +16,7 @@ const baseContribution: Contribution = {
   timingFileId: 'timing456',
   audioHash: 'hash789',
   createdBy: 'user1',
+  createdByName: 'Test User',
   createdAt: {} as FirebaseFirestore.Timestamp,
   status: 'approved',
   downloads: 0,
@@ -41,7 +42,7 @@ describe('submit', () => {
     mockedRepo.findByReciterAndSurah.mockResolvedValue(null);
     mockedRepo.create.mockResolvedValue(baseContribution);
 
-    const result = await submit('user1', validBody);
+    const result = await submit('user1', 'Test User', validBody);
     expect(result).toEqual(baseContribution);
     expect(mockedRepo.create).toHaveBeenCalledWith(
       expect.objectContaining({ reciterName: 'Sheikh Sudais', surah: 1 })
@@ -51,15 +52,15 @@ describe('submit', () => {
   it('throws ConflictError(DUPLICATE_HASH) when audioHash already exists', async () => {
     mockedRepo.findByHash.mockResolvedValue(baseContribution);
 
-    await expect(submit('user1', validBody)).rejects.toThrow(ConflictError);
-    await expect(submit('user1', validBody)).rejects.toMatchObject({ code: 'DUPLICATE_HASH' });
+    await expect(submit('user1', 'Test User', validBody)).rejects.toThrow(ConflictError);
+    await expect(submit('user1', 'Test User', validBody)).rejects.toMatchObject({ code: 'DUPLICATE_HASH' });
   });
 
   it('throws ConflictError(DUPLICATE_RECITER_SURAH) when reciter+surah pair exists and force=false', async () => {
     mockedRepo.findByHash.mockResolvedValue(null);
     mockedRepo.findByReciterAndSurah.mockResolvedValue(baseContribution);
 
-    await expect(submit('user1', validBody)).rejects.toMatchObject({ code: 'DUPLICATE_RECITER_SURAH' });
+    await expect(submit('user1', 'Test User', validBody)).rejects.toMatchObject({ code: 'DUPLICATE_RECITER_SURAH' });
   });
 
   it('allows submission when force=true even if reciter+surah exists', async () => {
@@ -67,7 +68,7 @@ describe('submit', () => {
     mockedRepo.findByReciterAndSurah.mockResolvedValue(baseContribution);
     mockedRepo.create.mockResolvedValue(baseContribution);
 
-    const result = await submit('user1', { ...validBody, force: true });
+    const result = await submit('user1', 'Test User', { ...validBody, force: true });
     expect(result).toEqual(baseContribution);
     expect(mockedRepo.findByReciterAndSurah).not.toHaveBeenCalled();
   });
@@ -91,7 +92,7 @@ describe('listBySurah', () => {
     mockedRepo.findBySurah.mockResolvedValue([baseContribution]);
     const result = await listBySurah(1);
     expect(result).toEqual([baseContribution]);
-    expect(mockedRepo.findBySurah).toHaveBeenCalledWith(1);
+    expect(mockedRepo.findBySurah).toHaveBeenCalledWith(1, true);
   });
 });
 

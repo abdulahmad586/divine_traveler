@@ -8,6 +8,7 @@ export interface Contribution {
   timingFileId: string;
   audioHash: string;
   createdBy: string;
+  createdByName: string;
   createdAt: FirebaseFirestore.Timestamp;
   status: ContributionStatus;
   downloads: number;

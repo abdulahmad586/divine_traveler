@@ -15,6 +15,7 @@ export async function authMiddleware(req: Request, _res: Response, next: NextFun
   try {
     const decoded = await auth.verifyIdToken(token);
     req.userId = decoded.uid;
+    req.userName = decoded.name ?? 'Anonymous';
 
     // Lazily create/update user record on every authenticated request
     await upsertUser(decoded.uid, decoded.name ?? '', decoded.email ?? '');

@@ -273,3 +273,244 @@ await http.post(
   headers: { 'Authorization': 'Bearer $token' },
 );
 ```
+
+---
+
+## Learning Journeys
+
+A journey tracks a user's progress through a range of Quran ayahs across one or more learning dimensions (read, memorize, translate, commentary).
+
+### Journey Object
+
+```json
+{
+  "id": "abc123",
+  "userId": "firebase-uid",
+  "title": "Read & Memorize: Surah 1:1 → Surah 2:286",
+  "dimensions": ["read", "memorize"],
+  "startSurah": 1,
+  "startAyah": 1,
+  "endSurah": 2,
+  "endAyah": 286,
+  "startDate": { "_seconds": 1743184800, "_nanoseconds": 0 },
+  "endDate": { "_seconds": 1774720800, "_nanoseconds": 0 },
+  "status": "active",
+  "totalAyahs": 293,
+  "completedAyahs": { "1_1": true, "1_2": true },
+  "completedCount": 2,
+  "createdAt": { "_seconds": 1743184800, "_nanoseconds": 0 },
+  "updatedAt": { "_seconds": 1743184800, "_nanoseconds": 0 }
+}
+```
+
+### Journey Statuses
+
+| Status | Meaning |
+|--------|---------|
+| `active` | In progress |
+| `paused` | Manually paused by the user |
+| `delayed` | End date has passed but not yet completed (auto-set lazily) |
+| `completed` | All ayahs in range marked as done (auto-set) |
+| `abandoned` | Manually abandoned by the user |
+
+> `active`, `paused`, and `delayed` all count toward the **5-journey active limit**.
+
+### Progress tracking
+
+- Progress is **non-linear** — ayahs can be marked in any order.
+- Marking progress on a surah/ayah outside the journey range returns `400`.
+- When `completedCount` reaches `totalAyahs`, the journey auto-completes.
+- Submitting a progress update on a `paused` journey automatically resumes it.
+
+---
+
+### `POST /journeys` — Create a journey
+
+**Auth required.**
+
+**Request body**
+
+```json
+{
+  "title": "My Ramadan Plan",
+  "dimensions": ["read", "memorize"],
+  "startSurah": 1,
+  "startAyah": 1,
+  "endSurah": 2,
+  "endAyah": 286,
+  "startDate": "2026-03-01T00:00:00Z",
+  "endDate": "2026-04-30T00:00:00Z"
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `title` | string | no | Auto-generated from range + dimensions if omitted |
+| `dimensions` | array | yes | One or more of `read`, `memorize`, `translate`, `commentary` |
+| `startSurah` | integer | yes | 1–114 |
+| `startAyah` | integer | yes | Must be a valid ayah in that surah |
+| `endSurah` | integer | yes | 1–114 |
+| `endAyah` | integer | yes | Must be a valid ayah in that surah |
+| `startDate` | ISO 8601 string | yes | Journey start date |
+| `endDate` | ISO 8601 string | yes | Journey target completion date |
+
+**Validations:**
+- Start position must come before end position
+- `startDate` must be before `endDate`
+- Ayah references are validated against actual Quran ayah counts
+- Max 5 active (non-completed, non-abandoned) journeys per user
+
+**Response `201`** — Journey object (see above).
+
+**Error codes**
+
+| Code | Meaning |
+|------|---------|
+| `MAX_ACTIVE_JOURNEYS` | User already has 5 active journeys |
+
+---
+
+### `GET /journeys` — List my journeys
+
+**Auth required.** Returns the authenticated user's journeys, newest first.
+
+**Response `200`** — Array of Journey objects.
+
+---
+
+### `GET /journeys/:id` — Get a journey
+
+No auth required.
+
+**Response `200`** — Journey object.
+
+**Response `404`** — Journey not found.
+
+---
+
+### `POST /journeys/:id/progress` — Update progress
+
+**Auth required.** Owner only.
+
+Mark a single ayah or an entire surah as done within the journey's range.
+
+**Request body — mark a single ayah**
+```json
+{ "surah": 1, "ayah": 5 }
+```
+
+**Request body — mark entire surah**
+```json
+{ "surah": 1 }
+```
+
+When marking an entire surah, only the ayahs that fall within the journey's range are marked. For example, if the journey starts at Surah 2 Ayah 100, marking Surah 2 will only mark ayahs 100–286.
+
+**Behaviour:**
+- Ayahs already marked as done are silently skipped (idempotent)
+- Submitting on a `paused` journey auto-resumes it to `active` (or `delayed` if past deadline)
+- Journey auto-completes when all ayahs are covered
+
+**Response `200`** — Updated Journey object.
+
+**Error codes**
+
+| Code | Meaning |
+|------|---------|
+| `JOURNEY_COMPLETED` | Journey is already completed |
+| `JOURNEY_ABANDONED` | Journey has been abandoned |
+
+---
+
+### `PATCH /journeys/:id/status` — Update journey status
+
+**Auth required.** Owner only.
+
+Manually pause, resume, or abandon a journey.
+
+**Request body**
+```json
+{ "status": "paused" }
+```
+
+| Allowed value | Description |
+|---------------|-------------|
+| `paused` | Pause an active or delayed journey |
+| `active` | Resume a paused journey |
+| `abandoned` | Abandon the journey permanently |
+
+> Cannot manually set status to `completed` or `delayed` — those are system-managed.
+
+**Response `200`** — Updated Journey object.
+
+---
+
+### `GET /users/:userId/journeys` — List another user's journeys
+
+No auth required. Returns all journeys for the given user, newest first.
+
+**Response `200`** — Array of Journey objects.
+
+---
+
+### Typical Flutter Usage — Journeys
+
+#### Create a journey
+```dart
+final token = await FirebaseAuth.instance.currentUser!.getIdToken();
+
+final response = await http.post(
+  Uri.parse('$baseUrl/journeys'),
+  headers: {
+    'Authorization': 'Bearer $token',
+    'Content-Type': 'application/json',
+  },
+  body: jsonEncode({
+    'dimensions': ['read', 'memorize'],
+    'startSurah': 1,
+    'startAyah': 1,
+    'endSurah': 2,
+    'endAyah': 286,
+    'startDate': '2026-03-01T00:00:00Z',
+    'endDate': '2026-04-30T00:00:00Z',
+  }),
+);
+```
+
+#### Mark progress on an ayah
+```dart
+final token = await FirebaseAuth.instance.currentUser!.getIdToken();
+
+await http.post(
+  Uri.parse('$baseUrl/journeys/$journeyId/progress'),
+  headers: {
+    'Authorization': 'Bearer $token',
+    'Content-Type': 'application/json',
+  },
+  body: jsonEncode({ 'surah': 1, 'ayah': 5 }),
+);
+```
+
+#### Mark an entire surah as done
+```dart
+await http.post(
+  Uri.parse('$baseUrl/journeys/$journeyId/progress'),
+  headers: {
+    'Authorization': 'Bearer $token',
+    'Content-Type': 'application/json',
+  },
+  body: jsonEncode({ 'surah': 1 }),
+);
+```
+
+#### Pause a journey
+```dart
+await http.patch(
+  Uri.parse('$baseUrl/journeys/$journeyId/status'),
+  headers: {
+    'Authorization': 'Bearer $token',
+    'Content-Type': 'application/json',
+  },
+  body: jsonEncode({ 'status': 'paused' }),
+);
+```

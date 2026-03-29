@@ -4,7 +4,7 @@ import { PostContributionBody } from '../validators/contributionValidator';
 
 export async function submit(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const contribution = await service.submit(req.userId, req.body as PostContributionBody);
+    const contribution = await service.submit(req.userId, req.userName, req.body as PostContributionBody);
     res.status(201).json(contribution);
   } catch (err) {
     next(err);

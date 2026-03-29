@@ -31,6 +31,7 @@ const fakeContribution: Contribution = {
   timingFileId: 'timing456',
   audioHash: 'hash789',
   createdBy: 'user1',
+  createdByName: 'Test User',
   createdAt: {} as FirebaseFirestore.Timestamp,
   status: 'approved',
   downloads: 5,
