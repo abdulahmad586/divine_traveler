@@ -514,3 +514,416 @@ await http.patch(
   body: jsonEncode({ 'status': 'paused' }),
 );
 ```
+
+---
+
+## Companionship
+
+Users can add each other as companions, view each other's active journeys, and block unwanted users.
+
+### User Object
+
+```json
+{
+  "id": "firebase-uid",
+  "name": "Alice",
+  "email": "alice@example.com",
+  "username": "alice",
+  "allowFriendRequests": true,
+  "createdAt": { "_seconds": 1743184800, "_nanoseconds": 0 },
+  "updatedAt": { "_seconds": 1743184800, "_nanoseconds": 0 }
+}
+```
+
+### UserProfile Object
+
+```json
+{
+  "id": "firebase-uid",
+  "name": "Alice",
+  "username": "alice",
+  "createdAt": { "_seconds": 1743184800, "_nanoseconds": 0 },
+  "stats": {
+    "totalCompanions": 5,
+    "completedAyahs": 120
+  },
+  "relationship": {
+    "isCompanion": true,
+    "sentRequest": false,
+    "receivedRequest": false,
+    "isBlocked": false
+  },
+  "journeys": [ /* array of active Journey objects — only present if isCompanion or viewing own profile */ ]
+}
+```
+
+> `relationship` and `journeys` are omitted when the endpoint is called without auth.
+
+---
+
+### `GET /me` — Get current user
+
+**Auth required.**
+
+**Response `200`** — User object.
+
+---
+
+### `PATCH /me/username` — Change username
+
+**Auth required.**
+
+**Request body**
+```json
+{ "username": "new_username" }
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `username` | string | yes | 3–40 chars, lowercase letters/numbers/dots/underscores/hyphens, cannot start or end with `.`, `_`, `-` |
+
+**Response `200`** — Updated User object.
+
+**Error codes**
+
+| Code | Meaning |
+|------|---------|
+| `USERNAME_TAKEN` | Another user already has this username |
+
+---
+
+### `PATCH /me/settings` — Update settings
+
+**Auth required.**
+
+**Request body**
+```json
+{ "allowFriendRequests": false }
+```
+
+**Response `200`** — Updated User object.
+
+---
+
+### `PATCH /me/fcm-token` — Register / refresh FCM token
+
+**Auth required.**
+
+Call this whenever the app receives a new FCM registration token (on first launch, after token refresh, or after the user signs back in).
+
+**Request body**
+```json
+{ "fcmToken": "<firebase-messaging-token>" }
+```
+
+**Response `204`** — No content.
+
+---
+
+### `GET /users/:username` — Get a user's public profile
+
+No auth required. Optionally provide auth to receive relationship context and companion journeys.
+
+**Response `200`** — UserProfile object.
+
+**Response `404`** — User not found.
+
+---
+
+### `GET /companions` — List my companions
+
+**Auth required.** Returns User objects for all current companions.
+
+**Response `200`** — Array of User objects.
+
+---
+
+### `DELETE /companions/:companionUserId` — Remove a companion
+
+**Auth required.**
+
+**Response `204`** — No content.
+
+**Response `404`** — Companionship not found.
+
+---
+
+### `GET /companions/requests/incoming` — List incoming requests
+
+**Auth required.** Returns pending companion requests sent to you.
+
+**Response `200`**
+```json
+[
+  {
+    "id": "req123",
+    "fromUserId": "firebase-uid",
+    "fromUsername": "bob",
+    "toUserId": "firebase-uid-2",
+    "toUsername": "alice",
+    "createdAt": { "_seconds": 1743184800, "_nanoseconds": 0 }
+  }
+]
+```
+
+---
+
+### `GET /companions/requests/outgoing` — List outgoing requests
+
+**Auth required.** Returns pending companion requests you have sent.
+
+**Response `200`** — Same shape as incoming requests.
+
+---
+
+### `POST /companions/requests` — Send a companion request
+
+**Auth required.**
+
+**Request body**
+```json
+{ "username": "bob" }
+```
+
+**Response `201`** — New request created:
+```json
+{
+  "autoAccepted": false,
+  "request": { /* CompanionRequest object */ }
+}
+```
+
+**Response `200`** — Auto-accepted (target had already sent you a request):
+```json
+{
+  "autoAccepted": true,
+  "companionship": { /* Companionship object */ }
+}
+```
+
+**Error codes**
+
+| Code | Meaning |
+|------|---------|
+| `ALREADY_COMPANIONS` | You are already companions with this user |
+| `REQUEST_ALREADY_SENT` | You have already sent a pending request to this user |
+
+> If `allowFriendRequests` is `false` on the target, returns `403`. If either user has blocked the other, returns `403`.
+
+---
+
+### `POST /companions/requests/:requestId/accept` — Accept a request
+
+**Auth required.** Only the recipient can accept.
+
+**Response `200`** — Companionship object:
+```json
+{
+  "id": "ship123",
+  "userIds": ["uid-a", "uid-b"],
+  "createdAt": { "_seconds": 1743184800, "_nanoseconds": 0 }
+}
+```
+
+---
+
+### `DELETE /companions/requests/:requestId` — Cancel or reject a request
+
+**Auth required.** Both sender (cancel) and recipient (reject) may call this.
+
+**Response `204`** — No content.
+
+---
+
+### `GET /blocks` — List blocked users
+
+**Auth required.**
+
+**Response `200`**
+```json
+[
+  {
+    "id": "block123",
+    "blockerUserId": "firebase-uid",
+    "blockedUserId": "firebase-uid-2",
+    "createdAt": { "_seconds": 1743184800, "_nanoseconds": 0 }
+  }
+]
+```
+
+---
+
+### `POST /blocks` — Block a user
+
+**Auth required.**
+
+**Request body**
+```json
+{ "username": "spammer" }
+```
+
+Blocking a user automatically removes any existing companionship and cancels any pending requests in either direction.
+
+**Response `204`** — No content.
+
+**Error codes**
+
+| Code | Meaning |
+|------|---------|
+| `ALREADY_BLOCKED` | User is already blocked |
+
+---
+
+### `DELETE /blocks/:blockedUserId` — Unblock a user
+
+**Auth required.**
+
+**Response `204`** — No content.
+
+**Response `404`** — Block not found.
+
+---
+
+### Typical Flutter Usage — Companionship
+
+#### Get current user
+```dart
+final token = await FirebaseAuth.instance.currentUser!.getIdToken();
+
+final response = await http.get(
+  Uri.parse('$baseUrl/me'),
+  headers: { 'Authorization': 'Bearer $token' },
+);
+final user = jsonDecode(response.body);
+```
+
+#### Update username
+```dart
+final response = await http.patch(
+  Uri.parse('$baseUrl/me/username'),
+  headers: {
+    'Authorization': 'Bearer $token',
+    'Content-Type': 'application/json',
+  },
+  body: jsonEncode({ 'username': 'new_name' }),
+);
+if (response.statusCode == 409) {
+  // username taken
+}
+```
+
+#### View someone's profile (with relationship context)
+```dart
+final response = await http.get(
+  Uri.parse('$baseUrl/users/bob'),
+  headers: { 'Authorization': 'Bearer $token' },
+);
+final profile = jsonDecode(response.body);
+// profile['relationship']['isCompanion'] → bool
+// profile['journeys'] → list (only if companion)
+```
+
+#### Send a companion request
+```dart
+final response = await http.post(
+  Uri.parse('$baseUrl/companions/requests'),
+  headers: {
+    'Authorization': 'Bearer $token',
+    'Content-Type': 'application/json',
+  },
+  body: jsonEncode({ 'username': 'bob' }),
+);
+final body = jsonDecode(response.body);
+if (body['autoAccepted'] == true) {
+  // Instantly became companions
+} else {
+  // Request sent, waiting for bob to accept
+}
+```
+
+#### Accept a companion request
+```dart
+await http.post(
+  Uri.parse('$baseUrl/companions/requests/$requestId/accept'),
+  headers: { 'Authorization': 'Bearer $token' },
+);
+```
+
+#### Block a user
+```dart
+await http.post(
+  Uri.parse('$baseUrl/blocks'),
+  headers: {
+    'Authorization': 'Bearer $token',
+    'Content-Type': 'application/json',
+  },
+  body: jsonEncode({ 'username': 'spammer' }),
+);
+```
+
+---
+
+## Push Notifications (FCM)
+
+The server sends FCM push notifications for the following events:
+
+| Event | Title | Body |
+|-------|-------|------|
+| Journey created | `Journey started!` | `Your journey "<title>" is ready. Let's begin.` |
+| Journey completed | `Journey complete!` | `You've finished "<title>". Amazing work!` |
+
+Each notification includes a `data` payload:
+
+```json
+{ "journeyId": "<id>", "type": "JOURNEY_CREATED" }
+{ "journeyId": "<id>", "type": "JOURNEY_COMPLETED" }
+```
+
+Use the `type` field to route the notification tap to the correct screen.
+
+Notifications are delivered silently if the user has no token registered. They will never cause an API request to fail.
+
+### Registering your FCM token
+
+Register the token as soon as it is available, and re-register on every token refresh.
+
+```dart
+import 'package:firebase_messaging/firebase_messaging.dart';
+
+Future<void> registerFcmToken(String idToken) async {
+  final fcmToken = await FirebaseMessaging.instance.getToken();
+  if (fcmToken == null) return;
+
+  await http.patch(
+    Uri.parse('$baseUrl/me/fcm-token'),
+    headers: {
+      'Authorization': 'Bearer $idToken',
+      'Content-Type': 'application/json',
+    },
+    body: jsonEncode({ 'fcmToken': fcmToken }),
+  );
+}
+
+// Call on login
+await registerFcmToken(idToken);
+
+// Re-register on token refresh
+FirebaseMessaging.instance.onTokenRefresh.listen((newToken) async {
+  final idToken = await FirebaseAuth.instance.currentUser?.getIdToken();
+  if (idToken != null) await registerFcmToken(idToken);
+});
+```
+
+### Handling notification taps
+
+```dart
+FirebaseMessaging.onMessageOpenedApp.listen((message) {
+  final type = message.data['type'];
+  final journeyId = message.data['journeyId'];
+
+  if (type == 'JOURNEY_CREATED' || type == 'JOURNEY_COMPLETED') {
+    // Navigate to the journey detail screen
+    Navigator.pushNamed(context, '/journeys/$journeyId');
+  }
+});
+```

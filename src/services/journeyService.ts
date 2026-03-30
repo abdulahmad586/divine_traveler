@@ -14,6 +14,7 @@ import {
   formatRange,
 } from '../data/quran';
 import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '../errors';
+import * as notificationService from './notificationService';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -86,7 +87,7 @@ export async function create(userId: string, body: CreateJourneyBody): Promise<J
   const title = body.title?.trim() || generateTitle(body);
   const totalAyahs = countAyahsInRange(body.startSurah, body.startAyah, body.endSurah, body.endAyah);
 
-  return repo.create({
+  const journey = await repo.create({
     userId,
     title,
     dimensions: body.dimensions,
@@ -98,6 +99,9 @@ export async function create(userId: string, body: CreateJourneyBody): Promise<J
     endDate: endDate as unknown as FirebaseFirestore.Timestamp,
     totalAyahs,
   });
+
+  notificationService.notifyJourneyCreated(userId, journey);
+  return journey;
 }
 
 export async function listByUser(userId: string): Promise<Journey[]> {
@@ -189,7 +193,11 @@ export async function updateProgress(
     newStatus = 'active'; // auto-resume from paused
   }
 
-  return repo.applyProgress(id, keys, newStatus);
+  const updated = await repo.applyProgress(id, keys, newStatus);
+  if (newStatus === 'completed') {
+    notificationService.notifyJourneyCompleted(journey.userId, updated);
+  }
+  return updated;
 }
 
 export async function updateStatus(
