@@ -3,7 +3,7 @@ import * as userRepo from '../repositories/userRepository';
 import * as journeyRepo from '../repositories/journeyRepository';
 import { User, UserProfile } from '../types/user';
 import { CompanionRequest, Companionship, Block } from '../types/companion';
-import { Journey } from '../types/journey';
+import { ACTIVE_STATUSES } from '../types/journey';
 import { UpdateUsernameBody, UpdateSettingsBody } from '../validators/userValidator';
 import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '../errors';
 
@@ -31,15 +31,17 @@ export async function getProfile(username: string, viewerUserId?: string): Promi
   if (!target) throw new NotFoundError(`User "${username}" not found`);
 
   // Fetch stats in parallel
-  const [companionCount, journeys] = await Promise.all([
+  const [companionCount, journeys, completedAyahs] = await Promise.all([
     companionRepo.countCompanionships(target.id),
     journeyRepo.findByUserId(target.id),
+    journeyRepo.sumCompletedAyahs(target.id),
   ]);
 
-  const completedAyahs = journeys.reduce((sum, j) => sum + j.completedCount, 0);
-  const activeJourneys = journeys.filter((j) =>
-    ['active', 'paused', 'delayed'].includes(j.status)
-  );
+  // Active journeys for this user = journeys where their own member status is active
+  const activeJourneys = journeys.filter((j) => {
+    const myMember = j.members.find((m) => m.userId === target.id);
+    return myMember && ACTIVE_STATUSES.includes(myMember.status);
+  });
 
   const profile: UserProfile = {
     id: target.id,

@@ -4,7 +4,7 @@ import * as userRepo from '../../src/repositories/userRepository';
 import * as journeyRepo from '../../src/repositories/journeyRepository';
 import { User } from '../../src/types/user';
 import { CompanionRequest, Companionship, Block } from '../../src/types/companion';
-import { Journey } from '../../src/types/journey';
+import { JourneyDetail, JourneyMember } from '../../src/types/journey';
 import {
   ValidationError,
   ConflictError,
@@ -62,10 +62,18 @@ function makeCompanionship(overrides: Partial<Companionship> = {}): Companionshi
   };
 }
 
-function makeJourney(overrides: Partial<Journey> = {}): Journey {
+function makeJourney(overrides: Partial<JourneyDetail> = {}): JourneyDetail {
+  const member: JourneyMember = {
+    userId: 'user1',
+    status: 'active',
+    completedAyahs: {},
+    completedCount: 0,
+    joinedAt: ts,
+    updatedAt: ts,
+  };
   return {
     id: 'j1',
-    userId: 'user1',
+    creatorId: 'user1',
     title: 'Test Journey',
     dimensions: ['read'],
     startSurah: 1,
@@ -76,8 +84,10 @@ function makeJourney(overrides: Partial<Journey> = {}): Journey {
     endDate: makeTimestamp('2099-12-31T00:00:00Z'),
     status: 'active',
     totalAyahs: 7,
-    completedAyahs: {},
-    completedCount: 0,
+    allowJoining: false,
+    memberIds: ['user1'],
+    memberCount: 1,
+    members: [member],
     createdAt: ts,
     updatedAt: ts,
     ...overrides,
@@ -328,15 +338,14 @@ describe('getProfile', () => {
   it('returns public profile without relationship when no viewer', async () => {
     mockedUserRepo.findByUsername.mockResolvedValue(makeUser());
     mockedCompanionRepo.countCompanionships.mockResolvedValue(3);
-    mockedJourneyRepo.findByUserId.mockResolvedValue([
-      makeJourney({ completedCount: 10 }),
-    ]);
+    mockedJourneyRepo.findByUserId.mockResolvedValue([makeJourney()]);
+    mockedJourneyRepo.sumCompletedAyahs.mockResolvedValue(42);
 
     const profile = await service.getProfile('alice');
 
     expect(profile.id).toBe('user1');
     expect(profile.stats.totalCompanions).toBe(3);
-    expect(profile.stats.completedAyahs).toBe(10);
+    expect(profile.stats.completedAyahs).toBe(42);
     expect(profile.relationship).toBeUndefined();
     expect(profile.journeys).toBeUndefined();
   });
@@ -345,6 +354,7 @@ describe('getProfile', () => {
     mockedUserRepo.findByUsername.mockResolvedValue(makeUser());
     mockedCompanionRepo.countCompanionships.mockResolvedValue(0);
     mockedJourneyRepo.findByUserId.mockResolvedValue([makeJourney()]);
+    mockedJourneyRepo.sumCompletedAyahs.mockResolvedValue(0);
 
     const profile = await service.getProfile('alice', 'user1');
 
@@ -356,6 +366,7 @@ describe('getProfile', () => {
     mockedUserRepo.findByUsername.mockResolvedValue(makeUser());
     mockedCompanionRepo.countCompanionships.mockResolvedValue(0);
     mockedJourneyRepo.findByUserId.mockResolvedValue([]);
+    mockedJourneyRepo.sumCompletedAyahs.mockResolvedValue(0);
     mockedCompanionRepo.findCompanionship.mockResolvedValue(null);
     mockedCompanionRepo.findRequest
       .mockResolvedValueOnce(null)    // sentReq
@@ -377,6 +388,7 @@ describe('getProfile', () => {
     mockedUserRepo.findByUsername.mockResolvedValue(makeUser());
     mockedCompanionRepo.countCompanionships.mockResolvedValue(1);
     mockedJourneyRepo.findByUserId.mockResolvedValue([makeJourney()]);
+    mockedJourneyRepo.sumCompletedAyahs.mockResolvedValue(0);
     mockedCompanionRepo.findCompanionship.mockResolvedValue(makeCompanionship());
     mockedCompanionRepo.findRequest
       .mockResolvedValueOnce(null)

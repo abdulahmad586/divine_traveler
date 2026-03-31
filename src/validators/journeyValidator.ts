@@ -12,6 +12,7 @@ export const createJourneySchema = z.object({
   endAyah: z.number().int().min(1),
   startDate: z.string().datetime(),
   endDate: z.string().datetime(),
+  allowJoining: z.boolean().optional().default(false),
 });
 
 export type CreateJourneyBody = z.infer<typeof createJourneySchema>;
@@ -27,4 +28,9 @@ export const updateStatusSchema = z.object({
   status: z.enum(['active', 'paused', 'abandoned']),
 });
 
+export const updateJourneySettingsSchema = z.object({
+  allowJoining: z.boolean(),
+});
+
 export type UpdateStatusBody = z.infer<typeof updateStatusSchema>;
+export type UpdateJourneySettingsBody = z.infer<typeof updateJourneySettingsSchema>;

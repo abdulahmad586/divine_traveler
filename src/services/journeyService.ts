@@ -1,10 +1,19 @@
 import * as repo from '../repositories/journeyRepository';
+import * as userRepo from '../repositories/userRepository';
+import * as companionRepo from '../repositories/companionRepository';
 import {
-  Journey,
+  JourneyDetail,
+  JourneyMember,
   JourneyStatus,
   MAX_ACTIVE_JOURNEYS,
+  ACTIVE_STATUSES,
 } from '../types/journey';
-import { CreateJourneyBody, UpdateProgressBody, UpdateStatusBody } from '../validators/journeyValidator';
+import {
+  CreateJourneyBody,
+  UpdateProgressBody,
+  UpdateStatusBody,
+  UpdateJourneySettingsBody,
+} from '../validators/journeyValidator';
 import {
   isValidAyah,
   isValidSurah,
@@ -17,19 +26,6 @@ import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '.
 import * as notificationService from './notificationService';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
-
-function isDelayed(journey: Journey): boolean {
-  const endMs = journey.endDate.seconds * 1000;
-  return Date.now() > endMs;
-}
-
-function resolveStatus(journey: Journey): JourneyStatus {
-  if (journey.status === 'completed' || journey.status === 'abandoned') {
-    return journey.status;
-  }
-  if (isDelayed(journey)) return 'delayed';
-  return journey.status === 'paused' ? 'paused' : 'active';
-}
 
 function generateTitle(body: CreateJourneyBody): string {
   const dimLabels: Record<string, string> = {
@@ -46,36 +42,40 @@ function generateTitle(body: CreateJourneyBody): string {
   return `${dimStr}: ${formatRange(body.startSurah, body.startAyah, body.endSurah, body.endAyah)}`;
 }
 
+async function getDetailOrThrow(id: string): Promise<JourneyDetail> {
+  const journey = await repo.findDetailById(id);
+  if (!journey) throw new NotFoundError(`Journey ${id} not found`);
+  return repo.syncDelayedMembers(journey);
+}
+
+function getMemberOrThrow(journey: JourneyDetail, userId: string): JourneyMember {
+  const member = journey.members.find((m) => m.userId === userId);
+  if (!member) throw new ForbiddenError('You are not a member of this journey');
+  return member;
+}
+
 // ─── Service functions ────────────────────────────────────────────────────────
 
-export async function create(userId: string, body: CreateJourneyBody): Promise<Journey> {
-  // Validate ayah references
+export async function create(userId: string, body: CreateJourneyBody): Promise<JourneyDetail> {
   if (!isValidSurah(body.startSurah) || !isValidAyah(body.startSurah, body.startAyah)) {
-    throw new ValidationError(
-      `Surah ${body.startSurah} Ayah ${body.startAyah} does not exist`
-    );
+    throw new ValidationError(`Surah ${body.startSurah} Ayah ${body.startAyah} does not exist`);
   }
   if (!isValidSurah(body.endSurah) || !isValidAyah(body.endSurah, body.endAyah)) {
-    throw new ValidationError(
-      `Surah ${body.endSurah} Ayah ${body.endAyah} does not exist`
-    );
+    throw new ValidationError(`Surah ${body.endSurah} Ayah ${body.endAyah} does not exist`);
   }
 
-  // Validate range order
   const startIdx = toLinearIndex(body.startSurah, body.startAyah);
   const endIdx = toLinearIndex(body.endSurah, body.endAyah);
   if (startIdx >= endIdx) {
     throw new ValidationError('Start position must come before end position');
   }
 
-  // Validate date range
   const startDate = new Date(body.startDate);
   const endDate = new Date(body.endDate);
   if (startDate >= endDate) {
     throw new ValidationError('startDate must be before endDate');
   }
 
-  // Enforce active journey cap
   const activeCount = await repo.countActiveByUserId(userId);
   if (activeCount >= MAX_ACTIVE_JOURNEYS) {
     throw new ConflictError(
@@ -88,7 +88,7 @@ export async function create(userId: string, body: CreateJourneyBody): Promise<J
   const totalAyahs = countAyahsInRange(body.startSurah, body.startAyah, body.endSurah, body.endAyah);
 
   const journey = await repo.create({
-    userId,
+    creatorId: userId,
     title,
     dimensions: body.dimensions,
     startSurah: body.startSurah,
@@ -98,44 +98,137 @@ export async function create(userId: string, body: CreateJourneyBody): Promise<J
     startDate: startDate as unknown as FirebaseFirestore.Timestamp,
     endDate: endDate as unknown as FirebaseFirestore.Timestamp,
     totalAyahs,
+    allowJoining: body.allowJoining,
   });
 
   notificationService.notifyJourneyCreated(userId, journey);
   return journey;
 }
 
-export async function listByUser(userId: string): Promise<Journey[]> {
+export async function listByUser(userId: string): Promise<JourneyDetail[]> {
   const journeys = await repo.findByUserId(userId);
-  // Lazily sync delayed status
-  return Promise.all(journeys.map((j) => syncDelayed(j)));
+  return Promise.all(journeys.map((j) => repo.syncDelayedMembers(j)));
 }
 
-export async function getById(id: string): Promise<Journey> {
-  const journey = await repo.findById(id);
-  if (!journey) throw new NotFoundError(`Journey ${id} not found`);
-  return syncDelayed(journey);
+export async function getById(id: string): Promise<JourneyDetail> {
+  return getDetailOrThrow(id);
+}
+
+export async function join(journeyId: string, userId: string): Promise<JourneyDetail> {
+  const journey = await getDetailOrThrow(journeyId);
+
+  if (!journey.allowJoining) {
+    throw new ForbiddenError('This journey is not open for joining');
+  }
+  if (!ACTIVE_STATUSES.includes(journey.status)) {
+    throw new ForbiddenError('This journey has already ended');
+  }
+  if (journey.memberIds.includes(userId)) {
+    throw new ConflictError('You are already a member of this journey', 'ALREADY_MEMBER');
+  }
+
+  const companionship = await companionRepo.findCompanionship(userId, journey.creatorId);
+  if (!companionship) {
+    throw new ForbiddenError('You must be a companion of the journey creator to join');
+  }
+
+  const activeCount = await repo.countActiveByUserId(userId);
+  if (activeCount >= MAX_ACTIVE_JOURNEYS) {
+    throw new ConflictError(
+      `You already have ${MAX_ACTIVE_JOURNEYS} active journeys.`,
+      'MAX_ACTIVE_JOURNEYS'
+    );
+  }
+
+  await repo.addMember(journeyId, userId);
+
+  const updated = (await repo.findDetailById(journeyId))!;
+  notificationService.notifyMemberJoined(userId, journey, updated.memberIds);
+  return updated;
+}
+
+export async function leave(journeyId: string, userId: string): Promise<void> {
+  const journey = await getDetailOrThrow(journeyId);
+  getMemberOrThrow(journey, userId);
+
+  const remainingMemberIds = journey.memberIds.filter((id) => id !== userId);
+  await repo.removeMember(journeyId, userId);
+  notificationService.notifyMemberLeft(userId, journey, remainingMemberIds);
+}
+
+export async function removeMember(
+  journeyId: string,
+  requestingUserId: string,
+  targetUserId: string
+): Promise<JourneyDetail> {
+  const journey = await getDetailOrThrow(journeyId);
+
+  if (journey.creatorId !== requestingUserId) {
+    throw new ForbiddenError('Only the journey creator can remove members');
+  }
+  if (targetUserId === requestingUserId) {
+    throw new ValidationError('You cannot remove yourself — use leave instead');
+  }
+
+  getMemberOrThrow(journey, targetUserId);
+
+  const remainingMemberIds = journey.memberIds.filter((id) => id !== targetUserId);
+  await repo.removeMember(journeyId, targetUserId);
+
+  const updated = (await repo.findDetailById(journeyId))!;
+  notificationService.notifyMemberRemoved(targetUserId, journey, remainingMemberIds);
+  return updated;
+}
+
+export async function nudge(
+  journeyId: string,
+  nudgerUserId: string,
+  targetUserId: string
+): Promise<void> {
+  const journey = await getDetailOrThrow(journeyId);
+  getMemberOrThrow(journey, nudgerUserId);
+  getMemberOrThrow(journey, targetUserId);
+
+  if (nudgerUserId === targetUserId) {
+    throw new ValidationError('You cannot nudge yourself');
+  }
+
+  const nudger = await userRepo.findById(nudgerUserId);
+  notificationService.notifyNudge(nudger!.name, targetUserId, journey);
+}
+
+export async function updateSettings(
+  journeyId: string,
+  requestingUserId: string,
+  body: UpdateJourneySettingsBody
+): Promise<JourneyDetail> {
+  const journey = await getDetailOrThrow(journeyId);
+
+  if (journey.creatorId !== requestingUserId) {
+    throw new ForbiddenError('Only the journey creator can update journey settings');
+  }
+
+  await repo.updateJourneySettings(journeyId, body);
+  return (await repo.findDetailById(journeyId))!;
 }
 
 export async function updateProgress(
   id: string,
   requestingUserId: string,
   body: UpdateProgressBody
-): Promise<Journey> {
-  const journey = await getById(id);
+): Promise<JourneyDetail> {
+  const journey = await getDetailOrThrow(id);
+  const member = getMemberOrThrow(journey, requestingUserId);
 
-  if (journey.userId !== requestingUserId) {
-    throw new ForbiddenError('You can only update progress on your own journeys');
+  if (member.status === 'completed') {
+    throw new ConflictError('You have already completed this journey', 'JOURNEY_COMPLETED');
   }
-  if (journey.status === 'completed') {
-    throw new ConflictError('This journey is already completed', 'JOURNEY_COMPLETED');
-  }
-  if (journey.status === 'abandoned') {
-    throw new ConflictError('This journey has been abandoned', 'JOURNEY_ABANDONED');
+  if (member.status === 'abandoned') {
+    throw new ConflictError('You have abandoned this journey', 'JOURNEY_ABANDONED');
   }
 
   const { surah, ayah } = body;
 
-  // Validate the ayah/surah reference
   if (ayah !== undefined) {
     if (!isValidAyah(surah, ayah)) {
       throw new ValidationError(`Surah ${surah} Ayah ${ayah} does not exist`);
@@ -146,7 +239,6 @@ export async function updateProgress(
     }
   }
 
-  // Validate the ayah is within the journey range
   if (ayah !== undefined) {
     const ayahIdx = toLinearIndex(surah, ayah);
     const startIdx = toLinearIndex(journey.startSurah, journey.startAyah);
@@ -158,7 +250,6 @@ export async function updateProgress(
       );
     }
   } else {
-    // Marking a full surah — the surah must overlap with the journey range
     if (surah < journey.startSurah || surah > journey.endSurah) {
       throw new ValidationError(
         `Surah ${surah} is outside this journey's range. ` +
@@ -167,7 +258,6 @@ export async function updateProgress(
     }
   }
 
-  // Collect ayah keys to mark
   const keys =
     ayah !== undefined
       ? [`${surah}_${ayah}`]
@@ -179,24 +269,24 @@ export async function updateProgress(
           journey.endAyah
         );
 
-  // Determine new status
-  const currentCompleted = journey.completedCount;
-  const newKeys = keys.filter((k) => !journey.completedAyahs[k]);
-  const newTotal = currentCompleted + newKeys.length;
+  const newKeys = keys.filter((k) => !member.completedAyahs[k]);
+  const newTotal = member.completedCount + newKeys.length;
   let newStatus: JourneyStatus;
 
   if (newTotal >= journey.totalAyahs) {
     newStatus = 'completed';
-  } else if (isDelayed(journey)) {
+  } else if (journey.endDate.seconds * 1000 < Date.now()) {
     newStatus = 'delayed';
   } else {
     newStatus = 'active'; // auto-resume from paused
   }
 
-  const updated = await repo.applyProgress(id, keys, newStatus);
+  const updated = await repo.applyProgress(id, requestingUserId, keys, newStatus);
+
   if (newStatus === 'completed') {
-    notificationService.notifyJourneyCompleted(journey.userId, updated);
+    notificationService.notifyJourneyCompleted(requestingUserId, updated);
   }
+
   return updated;
 }
 
@@ -204,36 +294,19 @@ export async function updateStatus(
   id: string,
   requestingUserId: string,
   body: UpdateStatusBody
-): Promise<Journey> {
-  const journey = await getById(id);
+): Promise<JourneyDetail> {
+  const journey = await getDetailOrThrow(id);
+  const member = getMemberOrThrow(journey, requestingUserId);
 
-  if (journey.userId !== requestingUserId) {
-    throw new ForbiddenError('You can only update your own journeys');
-  }
-  if (journey.status === 'completed') {
+  if (member.status === 'completed') {
     throw new ConflictError('Cannot change status of a completed journey', 'JOURNEY_COMPLETED');
   }
-  if (journey.status === 'abandoned') {
+  if (member.status === 'abandoned') {
     throw new ConflictError('Cannot change status of an abandoned journey', 'JOURNEY_ABANDONED');
   }
-  // Cannot manually set to completed or delayed
-  if (body.status === 'active' && journey.status === 'active') {
-    throw new ValidationError('Journey is already active');
+  if (body.status === 'active' && member.status === 'active') {
+    throw new ValidationError('Your journey is already active');
   }
 
-  await repo.updateStatus(id, body.status);
-  return { ...journey, status: body.status };
-}
-
-// ─── Internal ─────────────────────────────────────────────────────────────────
-
-async function syncDelayed(journey: Journey): Promise<Journey> {
-  if (
-    (journey.status === 'active' || journey.status === 'paused') &&
-    isDelayed(journey)
-  ) {
-    await repo.updateStatus(journey.id, 'delayed');
-    return { ...journey, status: 'delayed' };
-  }
-  return journey;
+  return repo.updateMemberStatus(id, requestingUserId, body.status);
 }
