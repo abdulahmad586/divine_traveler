@@ -103,6 +103,7 @@ export async function findDetailById(id: string): Promise<JourneyDetail | null> 
 export async function findByUserId(userId: string): Promise<JourneyDetail[]> {
   const memberSnap = await db.collectionGroup(MEMBERS)
     .where('userId', '==', userId)
+    .orderBy('joinedAt', 'desc')
     .get();
   if (memberSnap.empty) return [];
 
@@ -129,6 +130,7 @@ export async function countActiveByUserId(userId: string): Promise<number> {
 export async function sumCompletedAyahs(userId: string): Promise<number> {
   const snap = await db.collectionGroup(MEMBERS)
     .where('userId', '==', userId)
+    .orderBy('joinedAt', 'desc')
     .get();
   return snap.docs.reduce((sum, d) => sum + ((d.data().completedCount as number) || 0), 0);
 }
