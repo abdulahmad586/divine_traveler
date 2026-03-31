@@ -16,6 +16,8 @@ export const STATUS_PRIORITY: Record<JourneyStatus, number> = {
 
 export interface JourneyMember {
   userId: string;
+  name?: string;
+  username?: string;
   status: JourneyStatus;
   completedAyahs: Record<string, true>; // keys: "surah_ayah"
   completedCount: number;

@@ -27,6 +27,20 @@ import * as notificationService from './notificationService';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
+async function enrichJourney(detail: JourneyDetail): Promise<JourneyDetail> {
+  const userIds = detail.members.map((m) => m.userId);
+  const users = await userRepo.findManyByIds(userIds);
+  const userMap = new Map(users.map((u) => [u.id, u]));
+  return {
+    ...detail,
+    members: detail.members.map((m) => ({
+      ...m,
+      name: userMap.get(m.userId)?.name,
+      username: userMap.get(m.userId)?.username,
+    })),
+  };
+}
+
 function generateTitle(body: CreateJourneyBody): string {
   const dimLabels: Record<string, string> = {
     read: 'Read',
@@ -102,16 +116,17 @@ export async function create(userId: string, body: CreateJourneyBody): Promise<J
   });
 
   notificationService.notifyJourneyCreated(userId, journey);
-  return journey;
+  return enrichJourney(journey);
 }
 
 export async function listByUser(userId: string): Promise<JourneyDetail[]> {
   const journeys = await repo.findByUserId(userId);
-  return Promise.all(journeys.map((j) => repo.syncDelayedMembers(j)));
+  const synced = await Promise.all(journeys.map((j) => repo.syncDelayedMembers(j)));
+  return Promise.all(synced.map(enrichJourney));
 }
 
 export async function getById(id: string): Promise<JourneyDetail> {
-  return getDetailOrThrow(id);
+  return enrichJourney(await getDetailOrThrow(id));
 }
 
 export async function join(journeyId: string, userId: string): Promise<JourneyDetail> {
@@ -144,7 +159,7 @@ export async function join(journeyId: string, userId: string): Promise<JourneyDe
 
   const updated = (await repo.findDetailById(journeyId))!;
   notificationService.notifyMemberJoined(userId, journey, updated.memberIds);
-  return updated;
+  return enrichJourney(updated);
 }
 
 export async function leave(journeyId: string, userId: string): Promise<void> {
@@ -177,7 +192,7 @@ export async function removeMember(
 
   const updated = (await repo.findDetailById(journeyId))!;
   notificationService.notifyMemberRemoved(targetUserId, journey, remainingMemberIds);
-  return updated;
+  return enrichJourney(updated);
 }
 
 export async function nudge(
@@ -209,7 +224,7 @@ export async function updateSettings(
   }
 
   await repo.updateJourneySettings(journeyId, body);
-  return (await repo.findDetailById(journeyId))!;
+  return enrichJourney((await repo.findDetailById(journeyId))!);
 }
 
 export async function updateProgress(
@@ -287,7 +302,7 @@ export async function updateProgress(
     notificationService.notifyJourneyCompleted(requestingUserId, updated);
   }
 
-  return updated;
+  return enrichJourney(updated);
 }
 
 export async function updateStatus(
@@ -308,5 +323,5 @@ export async function updateStatus(
     throw new ValidationError('Your journey is already active');
   }
 
-  return repo.updateMemberStatus(id, requestingUserId, body.status);
+  return enrichJourney(await repo.updateMemberStatus(id, requestingUserId, body.status));
 }
