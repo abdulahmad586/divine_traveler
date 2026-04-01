@@ -20,4 +20,7 @@ router.patch('/settings', validateBody(updateSettingsSchema), meController.updat
 // PATCH /me/fcm-token
 router.patch('/fcm-token', validateBody(updateFcmTokenSchema), meController.updateFcmToken);
 
+// DELETE /me
+router.delete('/', meController.deleteAccount);
+
 export default router;

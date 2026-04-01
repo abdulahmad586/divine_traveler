@@ -1,5 +1,5 @@
 import { FieldValue } from 'firebase-admin/firestore';
-import { db } from '../config/firebase';
+import { db, auth } from '../config/firebase';
 import { User } from '../types/user';
 
 const COLLECTION = 'users';
@@ -97,6 +97,19 @@ export async function updateFcmToken(uid: string, fcmToken: string): Promise<voi
     fcmToken,
     updatedAt: FieldValue.serverTimestamp(),
   });
+}
+
+export async function deleteUser(uid: string): Promise<void> {
+  const userRef = db.collection(COLLECTION).doc(uid);
+  const doc = await userRef.get();
+  const username = doc.exists ? (doc.data() as User).username : null;
+
+  const batch = db.batch();
+  batch.delete(userRef);
+  if (username) batch.delete(db.collection(USERNAMES).doc(username));
+  await batch.commit();
+
+  await auth.deleteUser(uid);
 }
 
 // ─── Internal ────────────────────────────────────────────────────────────────

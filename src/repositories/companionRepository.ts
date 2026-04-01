@@ -164,3 +164,32 @@ export async function deleteBlock(blockerUserId: string, blockedUserId: string):
   const block = await findBlock(blockerUserId, blockedUserId);
   if (block) await db.collection(BLOCKS).doc(block.id).delete();
 }
+
+// ─── Account deletion helpers ─────────────────────────────────────────────────
+
+export async function deleteAllRequestsForUser(userId: string): Promise<void> {
+  const [incoming, outgoing] = await Promise.all([
+    db.collection(REQUESTS).where('toUserId', '==', userId).get(),
+    db.collection(REQUESTS).where('fromUserId', '==', userId).get(),
+  ]);
+  const batch = db.batch();
+  [...incoming.docs, ...outgoing.docs].forEach((d) => batch.delete(d.ref));
+  await batch.commit();
+}
+
+export async function deleteAllCompanionshipsForUser(userId: string): Promise<void> {
+  const snap = await db.collection(SHIPS).where('userIds', 'array-contains', userId).get();
+  const batch = db.batch();
+  snap.docs.forEach((d) => batch.delete(d.ref));
+  await batch.commit();
+}
+
+export async function deleteAllBlocksForUser(userId: string): Promise<void> {
+  const [sent, received] = await Promise.all([
+    db.collection(BLOCKS).where('blockerUserId', '==', userId).get(),
+    db.collection(BLOCKS).where('blockedUserId', '==', userId).get(),
+  ]);
+  const batch = db.batch();
+  [...sent.docs, ...received.docs].forEach((d) => batch.delete(d.ref));
+  await batch.commit();
+}

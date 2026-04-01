@@ -292,6 +292,17 @@ export async function updateJourneySettings(
   });
 }
 
+// ─── Account deletion helpers ─────────────────────────────────────────────────
+
+/** Deletes a journey document and all of its members subcollection documents. */
+export async function deleteJourney(journeyId: string): Promise<void> {
+  const membersSnap = await membersCol(journeyId).get();
+  const batch = db.batch();
+  membersSnap.docs.forEach((d) => batch.delete(d.ref));
+  batch.delete(db.collection(JOURNEYS).doc(journeyId));
+  await batch.commit();
+}
+
 // ─── Delayed sync ─────────────────────────────────────────────────────────────
 
 /**
